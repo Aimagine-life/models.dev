@@ -7,5 +7,6 @@ base_model = "alibaba/qwen3.5-35b-a3b"
 type = "toggle"
 
 [cost]
-input = 0.1168
-output = 1.0945
+input = 0.4561
+output = 1.8242
+cache_read = 0.228
