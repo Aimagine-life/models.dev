@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ExistingModel, SyncProvider, SyncedFullModel, SyncedModel } from "../index.js";
+import { MissingReasoningOptionsError } from "../missing-reasoning-options.js";
 import { factorBaseModel, modelMetadata, resolveModelMetadataBaseModel } from "./openrouter.js";
 
 // ========================================
@@ -111,11 +112,12 @@ async function fetchUsdRate(): Promise<UsdRate> {
       throw new Error(`Bank of Russia rates request failed: ${response.status} ${response.statusText}`);
     }
     const json = CbrDailyRatesJson.parse(await response.json());
-    // The mirror publishes an ISO 8601 timestamp ("2026-09-05T11:30:00+03:00");
-    // normalise it to the same YYYY-MM-DD contract as the XML path.
-    const parsed = new Date(json.Date);
-    if (Number.isNaN(parsed.getTime())) throw new Error(`Bank of Russia JSON mirror has an invalid Date: ${json.Date}`);
-    return UsdRate.parse({ rate: json.Valute.USD.Value, date: parsed.toISOString().slice(0, 10) });
+    // The mirror publishes a Moscow-time ISO 8601 timestamp
+    // ("2026-09-05T11:30:00+03:00"). Take its calendar day as written, without
+    // UTC conversion, so the header matches the bank's publication date.
+    const day = /^(\d{4}-\d{2}-\d{2})/.exec(json.Date);
+    if (day === null) throw new Error(`Bank of Russia JSON mirror has an invalid Date: ${json.Date}`);
+    return UsdRate.parse({ rate: json.Valute.USD.Value, date: day[1] });
   }
 }
 
@@ -278,7 +280,7 @@ function wireHeaderLines(options: ReasoningOptions | undefined): string[] {
   return lines;
 }
 
-type SkipReason = "no lab metadata" | "no resolvable reasoning controls";
+type SkipReason = "no lab metadata";
 
 function normalizeSlug(value: string) {
   return value.toLowerCase().replace(/[._]/g, "-");
@@ -310,8 +312,14 @@ export function buildHubrisModel(
   const reasoning = params.includes("reasoning");
   const reasoningOptions = reasoning ? resolveReasoningOptions(model.id, canonical, existing) : undefined;
   // A reasoner with no host-accurate controls anywhere is left for manual
-  // authoring rather than stamped with an invented control set.
-  if (reasoning && reasoningOptions === undefined) return { skip: "no resolvable reasoning controls" };
+  // authoring rather than stamped with an invented control set: the runner
+  // keeps any existing file and reports the model instead of deleting it.
+  if (reasoning && reasoningOptions === undefined) {
+    throw new MissingReasoningOptionsError(
+      model.id,
+      `${model.id}: reasoning model without OpenRouter/lab reasoning_options; author the controls manually`,
+    );
+  }
 
   const context = model.contextWindow != null && model.contextWindow > 0 ? model.contextWindow : undefined;
   // The catalog does not publish a max-output figure. Inherit the lab's
@@ -365,9 +373,9 @@ export const hubris = {
   preserveBaseModels: false,
   preserveDescriptions: false,
   authoritativeHeaders: true,
-  // Models without lab metadata (or without resolvable reasoning controls)
-  // are intentionally left out; they are listed in the sync notices, not
-  // opened as issues.
+  // Models without lab metadata are intentionally left out; they are listed
+  // in the sync notices, not opened as issues. Reasoners without resolvable
+  // controls raise MissingReasoningOptionsError so existing files are kept.
   trackMissingModels: false,
   sourceID(model) {
     return isChatModel(model) ? model.id : undefined;
