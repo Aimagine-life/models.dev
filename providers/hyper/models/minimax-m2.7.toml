@@ -6,7 +6,7 @@ reasoning_options = []
 [cost]
 input = 0.484
 output = 1.852
-cache_write = 0.242
+cache_read = 0.242
 
 [limit]
 context = 262_100
